@@ -15,6 +15,7 @@ import os
 
 from databricks.sdk import WorkspaceClient
 from flask import Flask, jsonify, render_template, request
+from sentence_transformers import SentenceTransformer
 
 import lakebase
 from weather_client import WeatherClient, geocode_location
@@ -26,6 +27,13 @@ app = Flask(__name__)
 _w = WorkspaceClient()
 
 WEATHER_TABLE_NAME = os.environ.get("WEATHER_TABLE_NAME", "weather_documents")
+EMBEDDINGS_TABLE_NAME = os.environ.get("EMBEDDINGS_TABLE_NAME", "weather_embeddings")
+EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+
+# Load embedding model once at module level for semantic search
+logger.info(f"Loading embedding model: {EMBEDDING_MODEL_NAME}...")
+_embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME)
+logger.info("Embedding model loaded")
 
 
 def ensure_weather_table():
@@ -256,6 +264,95 @@ def _upsert_weather_batch(documents: list[dict]) -> int:
                 count += 1
             conn.commit()
     return count
+
+
+@app.route("/weather/search", methods=["POST"])
+def search_weather():
+    """
+    Semantic search over weather documents using vector embeddings.
+    
+    Body (JSON): {"query": "risk of flooding near rivers", "top_k": 5}
+    
+    - query: Natural language search query
+    - top_k: Number of results to return (default: 5, clamped to 1-20)
+    
+    Returns: List of matching weather documents with similarity scores
+    """
+    body = request.json if request.is_json else {}
+    query = body.get("query", "").strip()
+    top_k = body.get("top_k", 5)
+    
+    # Validate query
+    if not query:
+        return jsonify({"error": "Query string is required"}), 400
+    
+    # Clamp top_k to reasonable bounds
+    try:
+        top_k = int(top_k)
+        top_k = max(1, min(20, top_k))
+    except (ValueError, TypeError):
+        return jsonify({"error": "top_k must be an integer"}), 400
+    
+    # Check if embeddings table exists and has data
+    try:
+        count_result = lakebase.run_query(
+            f"SELECT COUNT(*) as count FROM {EMBEDDINGS_TABLE_NAME}",
+            ()
+        )
+        if not count_result or count_result[0].get("count", 0) == 0:
+            return jsonify({
+                "error": "No embeddings found. Please sync weather data and run the embeddings pipeline first.",
+                "results": []
+            }), 404
+    except Exception as e:
+        logger.error(f"Error checking embeddings table: {e}")
+        return jsonify({
+            "error": "Embeddings table not found. Please run the embeddings pipeline first.",
+            "results": []
+        }), 404
+    
+    # Embed the query
+    try:
+        logger.info(f"Embedding query: {query}")
+        query_embedding = _embedding_model.encode([query])[0].tolist()
+    except Exception as e:
+        logger.error(f"Error embedding query: {e}")
+        return jsonify({"error": f"Failed to embed query: {str(e)}"}), 500
+    
+    # Run cosine similarity search using pgvector
+    try:
+        embedding_str = '{' + ','.join(str(float(x)) for x in query_embedding) + '}'
+        
+        results = lakebase.run_query(
+            f"""
+            SELECT 
+                d.id,
+                d.location,
+                d.source_type,
+                d.headline,
+                d.event,
+                d.narrative_text,
+                e.chunk_text,
+                e.chunk_index,
+                1 - (e.embedding <=> %s::vector) AS similarity
+            FROM {EMBEDDINGS_TABLE_NAME} e
+            JOIN {WEATHER_TABLE_NAME} d ON d.id = e.document_id
+            ORDER BY e.embedding <=> %s::vector
+            LIMIT %s
+            """,
+            (embedding_str, embedding_str, top_k)
+        )
+        
+        logger.info(f"Found {len(results)} results for query: {query}")
+        return jsonify({
+            "query": query,
+            "top_k": top_k,
+            "results": results
+        })
+        
+    except Exception as e:
+        logger.error(f"Error during semantic search: {e}", exc_info=True)
+        return jsonify({"error": f"Search failed: {str(e)}"}), 500
 
 
 if __name__ == "__main__":

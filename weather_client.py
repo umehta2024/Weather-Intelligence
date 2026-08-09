@@ -11,7 +11,7 @@ API documentation: https://www.weather.gov/documentation/services-web-api
 import hashlib
 import logging
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional, List, Dict, Tuple
 
 import requests
 
@@ -38,7 +38,7 @@ class WeatherClient:
             }
         )
 
-    def get_active_alerts(self, area: str | None = None, limit: int = 50) -> list[dict]:
+    def get_active_alerts(self, area: Optional[str] = None, limit: int = 50) -> List[Dict]:
         """
         Fetch active weather alerts.
 
@@ -67,7 +67,7 @@ class WeatherClient:
             logger.error(f"Failed to fetch alerts: {e}")
             return []
 
-    def get_point_metadata(self, lat: float, lon: float) -> dict | None:
+    def get_point_metadata(self, lat: float, lon: float) -> Optional[Dict]:
         """
         Get grid metadata for a lat/lon point.
 
@@ -85,7 +85,7 @@ class WeatherClient:
             logger.error(f"Failed to fetch point metadata for {lat},{lon}: {e}")
             return None
 
-    def get_forecast(self, lat: float, lon: float) -> list[dict]:
+    def get_forecast(self, lat: float, lon: float) -> List[Dict]:
         """
         Get the 7-day forecast for a lat/lon point.
 
@@ -194,7 +194,7 @@ class WeatherClient:
         }
 
 
-def geocode_location(location: str) -> tuple[float, float] | None:
+def geocode_location(location: str) -> Optional[Tuple[float, float]]:
     """
     Simple geocoding using Nominatim (OpenStreetMap) - free, no API key required.
     
