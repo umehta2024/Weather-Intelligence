@@ -5,16 +5,16 @@
   <title>Weather Intelligence</title>
   <style>
     :root {
-      --bg: #f4f6fb;
+      --bg: #f0f9ff;
       --card-bg: #ffffff;
-      --border: #e4e7ee;
-      --text: #1f2430;
-      --muted: #6b7280;
-      --accent: #4f46e5;
-      --accent-hover: #4338ca;
-      --danger: #dc2626;
-      --danger-hover: #b91c1c;
-      --radius: 10px;
+      --border: #dbeafe;
+      --text: #1e293b;
+      --muted: #64748b;
+      --accent: #0ea5e9;
+      --accent-hover: #0284c7;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --radius: 12px;
     }
 
     * { box-sizing: border-box; }
@@ -142,128 +142,142 @@
   </style>
 </head>
 <body>
-  <h1>Stock Watchlist</h1>
-  <p class="hint">Enter a single ticker symbol. This sends exactly ONE call to the Massive API to fetch the latest price, then adds it to your watchlist.</p>
+  <h1>🌤️ Weather Intelligence</h1>
+  <p class="hint">Fetch weather alerts and forecasts from the National Weather Service API. Data is stored in Lakebase for vector search and analysis.</p>
 
   <div class="card">
-    <form id="stock-form">
-      <label for="symbol">Ticker symbol</label>
-      <input type="text" id="symbol" name="symbol" placeholder="AAPL" required>
-      <button type="submit">Add to watchlist</button>
+    <h2 style="font-size: 16px; font-weight: 600; margin-bottom: 16px;">Sync Weather Data</h2>
+    <form id="weather-form">
+      <label for="locations">Locations (comma-separated)</label>
+      <input type="text" id="locations" name="locations" placeholder="Chicago, IL, Austin, TX, New York, NY" required>
+      
+      <label for="limit" style="margin-top: 16px;">Max alerts per location</label>
+      <input type="text" id="limit" name="limit" value="50" placeholder="50">
+      
+      <button type="submit">Sync Weather Data</button>
     </form>
 
     <div id="result"></div>
   </div>
 
   <div class="card">
-    <table id="watchlist-table">
-      <thead>
-        <tr>
-          <th>Symbol</th>
-          <th>Email</th>
-          <th>Latest price</th>
-          <th>Updated</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody id="watchlist-body"></tbody>
-    </table>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+      <h2 style="font-size: 16px; font-weight: 600; margin: 0;">Recent Weather Documents</h2>
+      <button onclick="loadDocuments()" style="margin: 0; padding: 6px 12px; font-size: 13px;">Refresh</button>
+    </div>
+    
+    <div style="margin-bottom: 12px;">
+      <label for="filter-location" style="display: inline-block; margin-right: 12px;">Filter by location:</label>
+      <input type="text" id="filter-location" placeholder="e.g., Chicago" style="width: auto; display: inline-block; padding: 6px 10px;">
+      <select id="filter-type" style="padding: 6px 10px; margin-left: 8px; border: 1px solid var(--border); border-radius: 6px;">
+        <option value="">All types</option>
+        <option value="alert">Alerts</option>
+        <option value="forecast">Forecasts</option>
+      </select>
+      <button onclick="loadDocuments()" style="margin-left: 8px; padding: 6px 12px; font-size: 13px;">Apply</button>
+    </div>
+    
+    <div id="documents-list"></div>
   </div>
 
   <script>
-    const form = document.getElementById("stock-form");
+    const form = document.getElementById("weather-form");
     const resultEl = document.getElementById("result");
-    const watchlistBody = document.getElementById("watchlist-body");
+    const documentsListEl = document.getElementById("documents-list");
 
-    async function loadWatchlist() {
+    async function loadDocuments() {
+      const location = document.getElementById("filter-location").value;
+      const sourceType = document.getElementById("filter-type").value;
+      
+      const params = new URLSearchParams({ limit: "20" });
+      if (location) params.append("location", location);
+      if (sourceType) params.append("source_type", sourceType);
+      
       try {
-        const resp = await fetch("/watchlist");
+        const resp = await fetch("/weather/documents?" + params);
         const data = await resp.json();
+        
         if (!resp.ok) {
-          resultEl.textContent = "Error loading watchlist: " + (data.error || resp.statusText);
+          documentsListEl.innerHTML = `<p style="color: var(--muted); padding: 20px; text-align: center;">Error loading documents: ${data.error || resp.statusText}</p>`;
           return;
         }
-        watchlistBody.innerHTML = "";
-
+        
         if (!data.length) {
-          const emptyTr = document.createElement("tr");
-          emptyTr.className = "empty-row";
-          emptyTr.innerHTML = `<td colspan="5">Your watchlist is empty. Add a ticker above to get started.</td>`;
-          watchlistBody.appendChild(emptyTr);
+          documentsListEl.innerHTML = `<p style="color: var(--muted); padding: 20px; text-align: center;">No weather documents found. Sync some data above to get started.</p>`;
           return;
         }
-
-        data.forEach((row) => {
-          const tr = document.createElement("tr");
-          const price = row.latest_price !== null && row.latest_price !== undefined
-            ? Number(row.latest_price).toFixed(2)
-            : "-";
-          const updated = row.updated_at ? new Date(row.updated_at).toLocaleString() : "-";
-          tr.innerHTML = `
-            <td>${row.symbol}</td>
-            <td>${row.email || "-"}</td>
-            <td>${price}</td>
-            <td>${updated}</td>
-            <td><button type="button" class="delete-btn" data-symbol="${row.symbol}">Remove</button></td>
+        
+        let html = "";
+        data.forEach((doc) => {
+          const typeColor = doc.source_type === "alert" ? "#ef4444" : "#0ea5e9";
+          const typeLabel = doc.source_type === "alert" ? "ALERT" : "FORECAST";
+          const issuedAt = doc.issued_at ? new Date(doc.issued_at).toLocaleString() : "-";
+          
+          html += `
+            <div style="border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 12px;">
+              <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px;">
+                <div>
+                  <span style="display: inline-block; background: ${typeColor}; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; margin-right: 8px;">${typeLabel}</span>
+                  <span style="color: var(--muted); font-size: 13px;">${doc.location}</span>
+                </div>
+                <span style="color: var(--muted); font-size: 12px;">${issuedAt}</span>
+              </div>
+              <h3 style="font-size: 14px; font-weight: 600; margin: 8px 0; color: var(--text);">${doc.event || "Weather Update"}</h3>
+              <p style="font-size: 14px; margin: 4px 0; color: var(--text);">${doc.headline || ""}</p>
+              <p style="font-size: 13px; color: var(--muted); margin-top: 8px; line-height: 1.5;">${(doc.narrative_text || "").substring(0, 200)}${doc.narrative_text && doc.narrative_text.length > 200 ? "..." : ""}</p>
+            </div>
           `;
-          watchlistBody.appendChild(tr);
         });
+        
+        documentsListEl.innerHTML = html;
       } catch (err) {
-        resultEl.textContent = "Failed to load watchlist: " + err;
+        documentsListEl.innerHTML = `<p style="color: var(--muted); padding: 20px; text-align: center;">Failed to load documents: ${err}</p>`;
       }
     }
 
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
-      const symbol = document.getElementById("symbol").value;
-      resultEl.textContent = "Adding to watchlist...";
+      const locationsInput = document.getElementById("locations").value;
+      const limitInput = document.getElementById("limit").value;
+      
+      const locations = locationsInput.split(",").map(l => l.trim()).filter(l => l);
+      const limit = parseInt(limitInput) || 50;
+      
+      if (!locations.length) {
+        resultEl.textContent = "Please enter at least one location.";
+        return;
+      }
+      
+      resultEl.textContent = "Syncing weather data for " + locations.length + " location(s)...";
 
       try {
-        const resp = await fetch("/watchlist", {
+        const resp = await fetch("/weather/sync", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ symbol }),
+          body: JSON.stringify({ locations, limit }),
         });
         const data = await resp.json();
+        
         if (!resp.ok) {
           resultEl.textContent = "Error: " + (data.error || resp.statusText);
           return;
         }
-        resultEl.textContent = "Added " + data.symbol + " at price " + data.latest_price;
-        document.getElementById("symbol").value = "";
-        loadWatchlist();
+        
+        let message = `✅ Synced ${data.synced} weather document(s) for ${data.locations.length} location(s).`;
+        if (data.errors && data.errors.length > 0) {
+          message += "\n\nErrors:\n" + data.errors.join("\n");
+        }
+        resultEl.textContent = message;
+        
+        // Reload documents after 1 second
+        setTimeout(loadDocuments, 1000);
       } catch (err) {
         resultEl.textContent = "Request failed: " + err;
       }
     });
 
-    watchlistBody.addEventListener("click", async (e) => {
-      const btn = e.target.closest(".delete-btn");
-      if (!btn) return;
-
-      const symbol = btn.dataset.symbol;
-      btn.disabled = true;
-      resultEl.textContent = "Removing " + symbol + "...";
-
-      try {
-        const resp = await fetch(`/watchlist/${encodeURIComponent(symbol)}`, {
-          method: "DELETE",
-        });
-        const data = await resp.json();
-        if (!resp.ok) {
-          resultEl.textContent = "Error: " + (data.error || resp.statusText);
-          btn.disabled = false;
-          return;
-        }
-        resultEl.textContent = "Removed " + data.symbol + " from your watchlist.";
-        loadWatchlist();
-      } catch (err) {
-        resultEl.textContent = "Request failed: " + err;
-        btn.disabled = false;
-      }
-    });
-
-    loadWatchlist();
+    // Load documents on page load
+    loadDocuments();
   </script>
 </body>
 </html>
